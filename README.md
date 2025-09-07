@@ -49,9 +49,9 @@ v1.0：2024年4月
 **配置步骤**
 1. 打开浏览器，访问任意R级作品的Bangumi详情页。
 2. Windows/Linus按`Ctrl+Shift+I`（Mac按`Cmd+Option+I`）打开浏览器开发者选项。
-3. （看图）选中"网络"或“Network”选项卡，勾选"禁用缓存"。
-4. （看图）刷新页面。页面加载完毕后，找到"g=js?"开头的一项，选中“标头”标签页，找到“请求标头”，复制Cookie一栏的所有内容。
-5. 粘贴到JS脚本第一行USER_COOKIE后的代码里。
+3. （看GetCookie.png）选中"网络"或“Network”选项卡，勾选"禁用缓存"。
+4. （看GetCookie.png）刷新页面。页面加载完毕后，找到"g=js?"开头的一项，选中“标头”标签页，找到“请求标头”，复制Cookie一栏的所有内容。
+5. 粘贴到脚本第一行USER_COOKIE后的代码里。
 6. 保存脚本。 配置成功啦！找个作品试试看吧。
 ```java
 //const USER_COOKIE = `Here is your cookie`//原版代码，改成：
