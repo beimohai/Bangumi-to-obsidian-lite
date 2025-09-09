@@ -681,16 +681,23 @@ async function getGameByurl(url) {
     const str = Array.from(infobox).map(li => li.innerText.trim()).join("\n");
     
     // 平台
-	const platformMatch = /平台:\s*(.*?)\s*展开\+/s.exec(str);
-	let platform = [];
-	if (!platformMatch) platform =  "未知";
-	let platformRaw = platformMatch[1].trim();
-	let platformList = platformRaw.includes("、") 
-		? platformRaw.split("、") 
-		: platformRaw.split(/\s+/);
-	platform = platformList
-		.filter(item => item.trim() !== "") 
-		.join("、"); 
+	const platformMatch = /平台:\s*([\s\S]*?)(?:\s*展开\+|$)/.exec(str);
+    // log(`[调试] platformMatch 完整结果:${JSON.stringify(platformMatch)}`);
+    // if (platformMatch) {
+    // log(`[调试] 整个匹配到的字符串:${JSON.stringify(platformMatch[0])}`); 
+    // log(`[调试] 平台信息捕获组:${JSON.stringify(platformMatch[1])}`);
+    // }
+    let platform = "未知";
+    if (platformMatch && platformMatch[1]) {
+    let lines = platformMatch[1].split('\n')
+        .map(line => line.trim()) 
+        .filter(line => line !== ''); 
+    const firstInvalidIndex = lines.findIndex(line => line.includes(':'));
+    const validPlatformLines = firstInvalidIndex > -1 
+        ? lines.slice(0, firstInvalidIndex) 
+        : lines;
+    platform = validPlatformLines.join('、') || "未知";
+    }
 
 
     const infoboxRules = {
