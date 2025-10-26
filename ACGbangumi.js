@@ -5,7 +5,7 @@
 
 //修改版作者：@北漠海 已征得原作者同意发布
 //修改版地址：https://github.com/beimohai/Bangumi-to-obsidian-lite
-//v2.1.2版
+//v2.2版
 
 const notice = (msg) => new Notice(msg, 5000);
 const log = (msg) => console.log(msg);
@@ -36,6 +36,7 @@ var pageNum = 1;
    配置项（可自行调整）
    AUTO_LOOP: 完成一部动画的记录后是否自动继续循环记录下一部（true为继续，false为暂停，默认false）
    OPEN_IN_MAIN_LEAF: 生成动画笔记后是否在当前活动窗格打开（true）或总是在新 leaf 打开（false）
+   BASIC_FOLDER_PATH：储存你的存放目录，需要自行修改
    ====================== */
 const AUTO_LOOP = false;
 const OPEN_IN_MAIN_LEAF = true;
