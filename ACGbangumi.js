@@ -5,7 +5,7 @@
 
 //修改版作者：@北漠海 已征得原作者同意发布
 //修改版地址：https://github.com/beimohai/Bangumi-to-obsidian-lite
-//v2.1版
+//v2.1.2版
 
 const notice = (msg) => new Notice(msg, 5000);
 const log = (msg) => console.log(msg);
@@ -35,10 +35,11 @@ var pageNum = 1;
 /* ======================
    配置项（可自行调整）
    AUTO_LOOP: 完成一部动画的记录后是否自动继续循环记录下一部（true为继续，false为暂停，默认false）
-   OPEN_IN_ACTIVE_LEAF: 生成动画笔记后是否在当前活动窗格打开（true）或总是在新 leaf 打开（false）
+   OPEN_IN_MAIN_LEAF: 生成动画笔记后是否在当前活动窗格打开（true）或总是在新 leaf 打开（false）
    ====================== */
 const AUTO_LOOP = false;
-const OPEN_IN_ACTIVE_LEAF = true;
+const OPEN_IN_MAIN_LEAF = true;
+const BASIC_FOLDER_PATH = "你的存放目录";
 
 /* ---------- 网络与 HTML 解析工具 ---------- */
 
@@ -153,10 +154,10 @@ async function bangumi(QuickAddInstance) {
             else if ([3,4,5].includes(m)) seasonFolder = "04月新番";
             else if ([6,7,8].includes(m)) seasonFolder = "07月新番";
             else if ([9,10,11].includes(m)) seasonFolder = "10月新番";
-            folderPath = `11. アニメ/追番记录/${seasonYear}/${seasonFolder}`;
+            folderPath = `${BASIC_FOLDER_PATH}/${seasonYear}/${seasonFolder}`;
         }
     } else {
-        folderPath = `11. アニメ/追番记录`;
+        folderPath = `${BASIC_FOLDER_PATH}`;
     }
 
     // 尝试解析 netaba subject 地址并抓取（容错，不影响主流程）
@@ -1002,20 +1003,51 @@ async function createNote(QuickAdd, fileName, content, folderPath, Info) {
         }
     }
 
-    // 打开文件：在当前活动窗格或新 leaf 打开（依据 OPEN_IN_ACTIVE_LEAF）
+    // 判定叶子是否属于主工作区（根分割区及其子区域）
+    function isInMainWorkspace(leaf) {
+        let current = leaf.parent;
+        while (current) {
+            if (current === app.workspace.rootSplit) {
+                return true;
+            }
+            current = current.parent;
+        }
+        return false;
+    }
+
+    // 获取主工作区现有叶子（用于OPEN_IN_MAIN_LEAF=true时复用）
+    function getExistingMainLeaf() {
+        const mainLeaves = [];
+        app.workspace.iterateAllLeaves(leaf => {
+            if (isInMainWorkspace(leaf)) {
+                mainLeaves.push(leaf);
+            }
+        });
+        // 优先返回主工作区活动叶子，无则返回第一个主工作区叶子
+        const activeMainLeaf = mainLeaves.find(leaf => leaf === app.workspace.activeLeaf);
+        return activeMainLeaf || (mainLeaves.length > 0 ? mainLeaves[0] : null);
+    }
+
+    // 打开文件的最终逻辑（整合OPEN_IN_MAIN_LEAF配置）
     if (file) {
-        if (typeof OPEN_IN_ACTIVE_LEAF !== 'undefined' && OPEN_IN_ACTIVE_LEAF) {
-            const activeLeaf = app.workspace.activeLeaf;
-            if (activeLeaf) {
-                await activeLeaf.openFile(file);
-            } else {
-                const newLeaf = app.workspace.getLeaf('tab');
-                await newLeaf.openFile(file);
+        let targetLeaf;
+        if (OPEN_IN_MAIN_LEAF) {
+            // 逻辑1：复用主工作区现有叶子（无则创建新的主工作区叶子）
+            targetLeaf = getExistingMainLeaf();
+            if (!targetLeaf) {
+                // 主工作区无叶子时，创建新的主工作区叶子（非分屏）
+                targetLeaf = app.workspace.createLeafInParent(app.workspace.rootSplit);
             }
         } else {
-            const newLeaf = app.workspace.getLeaf('tab');
-            await newLeaf.openFile(file);
+            // 逻辑2：在主工作区新建独立叶子（新标签页，非分屏）
+            // 使用getLeaf(true)强制在主工作区新建标签页，避免分屏
+            targetLeaf = app.workspace.getLeaf(true);
         }
+
+        // 强制激活目标叶子（确保在主工作区显示）
+        app.workspace.setActiveLeaf(targetLeaf);
+        // 打开文件
+        await targetLeaf.openFile(file);
     }
 
     // 若启用自动循环，递归继续（注意：大量连续操作可能造成调用栈增长）
