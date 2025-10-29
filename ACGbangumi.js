@@ -558,10 +558,7 @@ function parseNoteContent(content) {
         const fieldName = m[1].trim();
         let fieldValue = m[2].trim();
         if (/^[:\-]+$/.test(fieldName.replace(/\s+/g, '')) || /^[:\-]+$/.test(fieldValue.replace(/\s+/g, ''))) continue;
-        if (fieldValue.includes('→')) {
-            const arrowParts = fieldValue.split('→').map(s => s.trim());
-            fieldValue = arrowParts[arrowParts.length - 1];
-        }
+        // 移除箭头功能：直接取最终值（删除原箭头分割逻辑）
         fieldValue = fieldValue.replace(/\s*分\s*$/,'').trim();
         fields[fieldName] = fieldValue;
     }
@@ -571,7 +568,7 @@ function parseNoteContent(content) {
 /* ---------- 提取章节/变更记录等通用方法 ---------- */
 
 /**
- * extrait 指定标题块内部文本（不含标题行）
+ * 提取指定标题块内部文本（不含标题行）
  * @param {string} content 全文
  * @param {string} title 标题（例如 "总评"）
  * @returns {string} 区块文本
@@ -678,7 +675,7 @@ function getNetabaSubjectUrl(bgmUrl) {
    - 保留用户在分集表格内的评分/短评/状态
    - 仅追加缺失集（不会覆盖已有分集行）
    - 合并并去重变更记录
-   - 在写入前会尽量清理历史残留的单行时间戳记录，避免重复或错位
+   - 动画信息部分直接覆盖，旧数据仅保留在变更记录
    ========================= */
 
 /**
@@ -772,7 +769,7 @@ async function createNote(QuickAdd, fileName, content, folderPath, Info) {
         file = app.vault.getAbstractFileByPath(filePath);
     } catch (err) {
         if (err.message && err.message.includes("already exists")) {
-            // 目标已存在：进入合并更新逻辑
+            // 目标已存在：进入覆盖更新逻辑（删除箭头，直接替换动画信息）
             file = app.vault.getAbstractFileByPath(filePath);
             const oldContent = await app.vault.read(file);
 
@@ -788,216 +785,39 @@ async function createNote(QuickAdd, fileName, content, folderPath, Info) {
             );
             if (!overwrite) return;
 
-            // 解析旧分集数（仅数值首列的行）
-            const existingNumericRows = extractExistingNumericRowsFromContent(oldContent);
-            const existingCount = existingNumericRows.length;
+            // 核心修改：直接覆盖动画信息，仅保留用户数据和变更记录
+            // 1. 提取旧数据（分集用户数据、总评、变更记录）
+            const existingNumericRows = extractExistingNumericRowsFromContent(oldContent); // 分集状态/评分/短评
+            const preservedTotalReview = extractSection(oldContent, "总评"); // 总评内容
+            const oldChangeLines = extractChangeRecords(oldContent); // 历史变更记录
 
-            // 解析新抓取到的分集列表
-            const newParsed = parseEpisodes(Info.paraList || '');
-            const newCount = newParsed.length;
-
-            // 提取旧变更记录（行数组）
-            const oldChangeLines = (function(){
-                const headerRegex = /^#\s*变更记录\s*$/m;
-                const match = oldContent.match(headerRegex);
-                if (!match) return [];
-                const headerPos = oldContent.search(headerRegex);
-                const afterHeaderPos = oldContent.indexOf('\n', headerPos);
-                const start = (afterHeaderPos === -1) ? headerPos + match[0].length : afterHeaderPos + 1;
-                const rest = oldContent.slice(start);
-                const nextHeader = rest.search(/\n#\s/);
-                const end = (nextHeader === -1) ? oldContent.length : start + nextHeader;
-                const block = oldContent.slice(start, end).trim();
-                if (!block) return [];
-                const lines = block.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-                return lines;
-            })();
-
-            // 提取旧的 "# 总评" 区块文本（保留原样）
-            const preservedTotalReviewText = (function(){
-                const reg = /^#\s*总评\s*$/m;
-                const m = reg.exec(oldContent);
-                if (!m) return '';
-                const start = m.index + m[0].length;
-                const rest = oldContent.slice(start);
-                const nextHeader = rest.search(/\n#\s/);
-                const end = nextHeader === -1 ? oldContent.length : start + nextHeader;
-                return oldContent.slice(start, end).trim();
-            })();
-
-            // 以旧内容为基础，进行尽量小范围更新
-            let updatedContent = oldContent;
-
-            // 将在此次操作中新增的变更记录（时间戳行）
-            let newChangeLines = [];
-
-            // 对比并合并头部关键字段（保留箭头展示）
-            const tempGenerated = generateTemplateContent(Info);
-            const newFields = parseNoteContent(tempGenerated);
+            // 2. 对比旧字段和新字段，生成新的变更记录（记录旧值→新值）
+            const newFields = parseNoteContent(generateTemplateContent(Info));
             const fieldsToCompare = ["个人评分", "BGM 评分", "观看状态", "记录日期"];
+            const newChangeLines = [];
 
             for (const field of fieldsToCompare) {
                 const oldValue = oldFields[field];
                 const newValue = newFields[field];
-
-                const existingDisplayed = (oldContent) ? (function () {
-                    const rr = new RegExp(`^\\|\\s*${escapeRegExpLocal(field)}\\s*\\|\\s*([^|]*?)\\s*\\|`, 'm');
-                    const mm = oldContent.match(rr);
-                    return mm && mm[1] ? mm[1].trim() : null;
-                })() : null;
-
-                // 相同则保留旧展示（包含箭头链）
-                if (oldValue !== undefined && newValue !== undefined && areValuesEqual(field, oldValue, newValue)) {
-                    if (existingDisplayed && existingDisplayed.length > 0) {
-                        const fieldRegex = new RegExp(`(^\\|\\s*${escapeRegExpLocal(field)}\\s*\\|\\s*)([^|]*?)(\\s*\\|)`, 'm');
-                        if (fieldRegex.test(updatedContent)) {
-                            updatedContent = updatedContent.replace(fieldRegex, `$1${existingDisplayed}$3`);
-                        } else {
-                            const insertPos = updatedContent.indexOf('\n# 分集信息');
-                            const lineToInsert = `\n| ${field} | ${existingDisplayed} |`;
-                            if (insertPos !== -1) {
-                                updatedContent = updatedContent.slice(0, insertPos) + lineToInsert + updatedContent.slice(insertPos);
-                            } else {
-                                updatedContent += `\n| ${field} | ${existingDisplayed} |`;
-                            }
-                        }
-                    }
-                    continue;
+                if (oldValue === undefined || newValue === undefined) continue;
+                if (!areValuesEqual(field, oldValue, newValue)) {
+                    const displayOld = formatDisplayValue(field, oldValue);
+                    const displayNew = formatDisplayValue(field, newValue);
+                    newChangeLines.push(`- ${getNowTimestamp()} ${field}: ${displayOld} → ${displayNew}`);
                 }
-
-                // 不同则构造新展示（保留旧展示并追加箭头）
-                const displayNew = formatDisplayValue(field, newValue);
-                const displayOld = formatDisplayValue(field, oldValue);
-
-                let newDisplayed;
-                if ((existingDisplayed === null || existingDisplayed === '') && (oldValue !== undefined && oldValue !== null && oldValue !== '')) {
-                    newDisplayed = `${displayOld} → ${displayNew}`;
-                } else if (existingDisplayed && existingDisplayed.length > 0) {
-                    const parts = existingDisplayed.split('→').map(s => s.trim());
-                    const lastShown = parts[parts.length - 1];
-                    if (lastShown === displayNew) newDisplayed = existingDisplayed;
-                    else newDisplayed = existingDisplayed + ' → ' + displayNew;
-                } else {
-                    newDisplayed = displayNew;
-                }
-
-                const fieldRegex = new RegExp(`(^\\|\\s*${escapeRegExpLocal(field)}\\s*\\|\\s*)([^|]*?)(\\s*\\|)`, 'm');
-                if (fieldRegex.test(updatedContent)) {
-                    updatedContent = updatedContent.replace(fieldRegex, `$1${newDisplayed}$3`);
-                } else {
-                    const insertPos = updatedContent.indexOf('\n# 分集信息');
-                    const lineToInsert = `\n| ${field} | ${newDisplayed} |`;
-                    if (insertPos !== -1) {
-                        updatedContent = updatedContent.slice(0, insertPos) + lineToInsert + updatedContent.slice(insertPos);
-                    } else {
-                        updatedContent += `\n| ${field} | ${newDisplayed} |`;
-                    }
-                }
-
-                // 如果真有变化则添加变更记录行
-                if (!(oldValue === undefined || oldValue === null || oldValue === '')) {
-                    if (!areValuesEqual(field, oldValue, newValue)) {
-                        newChangeLines.push(`- ${getNowTimestamp()} ${field}: ${displayOld} → ${displayNew}`);
-                    }
-                }
-            } // end fields
-
-            /* 追加分集：只追加 newParsed 中超出 existingCount 的那一段
-               1) 计算 toAppend = newParsed.slice(existingCount)
-               2) 插入到分集表体末尾（保留原表头、分隔线）
-               3) 新增行状态由 Info.state 决定（已看 => ☑；否则 ☒ 或 ☐）
-             */
-            if (newCount > existingCount) {
-                const toAppend = newParsed.slice(existingCount);
-                if (toAppend.length > 0) {
-                    const headerRegex = /^#\s*分集信息\s*$/m;
-                    const headerMatch = headerRegex.exec(oldContent);
-                    if (headerMatch) {
-                        const headerLineStart = headerMatch.index;
-                        const headerLineEnd = headerMatch.index + headerMatch[0].length;
-                        const rest = oldContent.slice(headerLineEnd);
-                        const nextHeaderMatch = rest.match(/\n#\s/);
-                        const blockEnd = nextHeaderMatch ? headerLineEnd + nextHeaderMatch.index : oldContent.length;
-                        const blockStart = headerLineStart;
-
-                        const oldTableBlock = oldContent.slice(blockStart, blockEnd);
-                        const lines = oldTableBlock.split('\n');
-
-                        // 定位表头行与分隔行位置（尽量鲁棒）
-                        let headerIdx = lines.findIndex(l => /^\|\s*集数\s*\|/.test(l));
-                        if (headerIdx === -1) {
-                            headerIdx = lines.findIndex(l => l.includes('集数') && l.trim().startsWith('|'));
-                            if (headerIdx === -1) headerIdx = lines.findIndex(l => l.trim().startsWith('|'));
-                        }
-                        let sepIdx = -1;
-                        if (headerIdx !== -1) {
-                            sepIdx = lines.findIndex((l, idx) => idx > headerIdx && /^\|\s*-{1,}\s*\|/.test(l));
-                        }
-                        const bodyStart = (sepIdx !== -1) ? sepIdx + 1 : Math.max(headerIdx + 1, 0);
-
-                        // 找出现有表体实际结束行（最后一个以 | 开头的行）
-                        let bodyEnd = bodyStart - 1;
-                        for (let i = bodyStart; i < lines.length; i++) {
-                            if (lines[i].trim().startsWith('|')) bodyEnd = i;
-                            else break;
-                        }
-
-                        // 用联合键（jp||cn）避免重复追加同一集
-                        const existingPairs = new Set(existingNumericRows.map(r => (String(r.jpTitle||'') + '||' + String(r.cnTitle||'')).trim()));
-
-                        const appendedLines = [];
-                        const statusForAppend = (Info.state === "已看") ? CHECKED : UNCHECKED;
-
-                        for (const np of toAppend) {
-                            const pair = (String(np.jpTitle || '') + '||' + String(np.cnTitle || '')).trim();
-                            if (!pair) continue;
-                            if (existingPairs.has(pair)) continue;
-                            let epStr = '';
-                            const epNum = parseInt(String(np.episode || '').replace(/[^\d]/g, ''), 10);
-                            if (!isNaN(epNum) && epNum > 0) epStr = String(epNum);
-                            else epStr = String(existingCount + appendedLines.length + 1);
-                            appendedLines.push(episodeRowToLine({ episode: epStr, jpTitle: np.jpTitle || '', cnTitle: np.cnTitle || '', status: statusForAppend }));
-                            existingPairs.add(pair);
-                        }
-
-                        if (appendedLines.length > 0) {
-                            const insertIndex = bodyEnd + 1;
-                            const newLines = lines.slice(0, insertIndex).concat(appendedLines).concat(lines.slice(insertIndex));
-                            const newTableBlock = newLines.join('\n');
-                            updatedContent = oldContent.slice(0, blockStart) + newTableBlock + oldContent.slice(blockEnd);
-                        } else {
-                            updatedContent = oldContent;
-                        }
-                    } else {
-                        updatedContent = oldContent;
-                    }
-                }
-            } // end append logic
-
-            // 合并变更记录并去重（旧在前，新在后）
-            const mergedChangeLines = uniqueKeepOrderLocal(oldChangeLines.concat(newChangeLines));
-
-            // 关键步骤：删除文档中所有时间戳行（防止历史残留造成重复或错位）
-            updatedContent = updatedContent.replace(/^\-\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}.*$/gm, '');
-            // 移除原有的变更记录块（将由下文统一追加）
-            updatedContent = updatedContent.replace(/(^#\s*变更记录\s*$)([\s\S]*?)(?=\n#\s|$)/gm, '');
-
-            // 追加新的变更记录块到文末（并去重）
-            const changeBlock = mergedChangeLines.length > 0 ? ('# 变更记录\n' + mergedChangeLines.join('\n')) : '# 变更记录';
-            updatedContent = normalizeBlankLinesLocal(updatedContent).trim() + '\n' + changeBlock + '\n';
-
-            // 确保 "# 总评" 前不多出空行（保持整洁）
-            updatedContent = updatedContent.replace(/\n{2,}#\s*总评/m, '\n# 总评');
-
-            // 写回文件（仅在文本有改动时写）
-            if (updatedContent.trim() === oldContent.trim()) {
-                new Notice("已保留原笔记");
-            } else {
-                const toWrite = normalizeBlankLinesLocal(updatedContent).trim() + '\n';
-                await app.vault.modify(file, toWrite);
-                new Notice(`已更新笔记: ${fileName}`);
             }
 
+            // 3. 生成新模板（含新动画信息+旧分集/总评）
+            let updatedContent = generateTemplateContent(Info, existingNumericRows, preservedTotalReview);
+
+            // 4. 合并变更记录（旧记录+新记录，去重）
+            const mergedChangeLines = uniqueKeepOrderLocal(oldChangeLines.concat(newChangeLines));
+            updatedContent = replaceOrAppendChangeBlock(updatedContent, mergedChangeLines);
+
+            // 5. 写回文件（直接覆盖，无箭头残留）
+            const toWrite = normalizeBlankLinesLocal(updatedContent).trim() + '\n';
+            await app.vault.modify(file, toWrite);
+            new Notice(`已覆盖更新笔记: ${fileName}`);
             file = app.vault.getAbstractFileByPath(filePath);
         } else {
             new Notice(`创建笔记失败: ${err.message || String(err)}`);
